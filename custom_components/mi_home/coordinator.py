@@ -302,6 +302,10 @@ class MiHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         prev_start = self._last_route_start.get(entity_id)
         prev_engine = self._last_engine_on.get(entity_id)
         prev_points = self._last_route_points.get(entity_id, [])
+        first_observation = (
+            entity_id not in self._last_route_start
+            and entity_id not in self._last_engine_on
+        )
 
         # Update tracking state
         self._last_route_start[entity_id] = route_start
@@ -309,8 +313,14 @@ class MiHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if route_points:
             self._last_route_points[entity_id] = route_points
 
-        # First observation: just remember initial state
-        if prev_start is None and prev_engine is None:
+        # First observation after install / restart:
+        # If we have routePoints from a journey that already ended (engine off),
+        # record them so the user sees their most recent journey immediately.
+        # If engine is currently on, the journey is in progress — don't record
+        # yet, just remember state.
+        if first_observation:
+            if route_points and engine_on is False:
+                self._record_journey(entity_id, route_points)
             return
 
         journey_ended = False
