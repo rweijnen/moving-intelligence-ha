@@ -175,19 +175,21 @@ def _journeys_for_date_attrs(
             },
         })
 
-    attrs["geojson"] = {"type": "FeatureCollection", "features": features}
-
-    # Separate FeatureCollections for start and end Point markers, so the
-    # dashboard can render them as different-colored layers via ha-map-card.
-    starts: list[dict] = []
-    ends: list[dict] = []
+    # Add Point features for start/end of each journey to the main geojson
+    # FeatureCollection. ha-map-card renders Points as L.circleMarker so they
+    # show up as visible dots at the route endpoints.
+    #
+    # We keep these in the SAME FeatureCollection (rather than separate
+    # attributes) because ha-map-card 1.14.3 has a bug where multiple geojson
+    # layers from the same entity silently drop all but the last layer.
+    point_features: list[dict] = []
     for j in journeys:
         wps = j.get("waypoints") or []
         if len(wps) < 2:
             continue
         first = wps[0]
         last = wps[-1]
-        starts.append({
+        point_features.append({
             "type": "Feature",
             "geometry": {
                 "type": "Point",
@@ -195,7 +197,7 @@ def _journeys_for_date_attrs(
             },
             "properties": {"kind": "start"},
         })
-        ends.append({
+        point_features.append({
             "type": "Feature",
             "geometry": {
                 "type": "Point",
@@ -203,8 +205,11 @@ def _journeys_for_date_attrs(
             },
             "properties": {"kind": "end"},
         })
-    attrs["geojson_starts"] = {"type": "FeatureCollection", "features": starts}
-    attrs["geojson_ends"] = {"type": "FeatureCollection", "features": ends}
+
+    attrs["geojson"] = {
+        "type": "FeatureCollection",
+        "features": features + point_features,
+    }
     return attrs
 
 
