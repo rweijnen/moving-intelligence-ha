@@ -117,6 +117,27 @@ def _journey_attrs(coord: MiHomeCoordinator, eid: int) -> dict[str, Any]:
     if j.get("end_location"):
         attrs["end_lat"] = j["end_location"].get("lat")
         attrs["end_lon"] = j["end_location"].get("lon")
+    # GeoJSON LineString for ha-map-card and similar frontend cards.
+    waypoints = j.get("waypoints") or []
+    if len(waypoints) >= 2:
+        coordinates = [
+            [round(wp["lon"], 6), round(wp["lat"], 6)]
+            for wp in waypoints
+            if wp.get("lat") is not None and wp.get("lon") is not None
+        ]
+        if len(coordinates) >= 2:
+            attrs["geojson"] = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": coordinates,
+                },
+                "properties": {
+                    "distance_km": j.get("distance_km"),
+                    "max_speed": j.get("max_speed"),
+                    "avg_speed": j.get("avg_speed"),
+                },
+            }
     return attrs
 
 

@@ -58,9 +58,18 @@ For each vehicle on your account:
 | `sensor.<licence>_battery_voltage` | sensor | Vehicle battery voltage |
 | `sensor.<licence>_last_journey_distance` | sensor | Distance of last journey (km) |
 | `sensor.<licence>_last_journey_duration` | sensor | Duration of last journey (min) |
+| `sensor.<licence>_last_journey_max_speed` | sensor | Maximum speed during last journey (km/h) |
+| `sensor.<licence>_last_journey_avg_speed` | sensor | Average moving speed during last journey (km/h) |
 | `sensor.<licence>_alarm_count` | sensor | Number of unread alarms |
 | `binary_sensor.<licence>_engine` | binary_sensor | Engine running |
 | `binary_sensor.<licence>_jammed` | binary_sensor | GPS/GSM signal jammed |
+| `switch.<licence>_immobilizer` | switch | Block/unblock the engine |
+| `calendar.<licence>_journeys` | calendar | One event per recorded journey, browseable by date |
+
+The `last_journey_distance` sensor exposes a `geojson` attribute containing
+the full driven route as a GeoJSON `LineString`. This can be rendered on a
+map by [ha-map-card](https://github.com/nathan-gs/ha-map-card) — see
+[Dashboard examples](#dashboard-examples).
 
 ## Events
 
@@ -75,6 +84,36 @@ Data:
 - `avg_speed` — average speed (excluding stops)
 - `duration_min` — duration in minutes
 - `waypoint_count` — number of GPS waypoints recorded
+
+## Dashboard examples
+
+### Show the last driven route on a map
+
+The `last_journey_distance` sensor exposes the full waypoint trail as a
+GeoJSON `LineString` in the `geojson` attribute. With
+[ha-map-card](https://github.com/nathan-gs/ha-map-card) (HACS frontend
+plugin), you can render the route on a map:
+
+```yaml
+type: custom:map-card
+entities:
+  - entity: device_tracker.h461hn_location
+geojson:
+  - entity: sensor.h461hn_last_journey_distance
+    attribute: geojson
+    color: "#df002b"
+zoom: 12
+```
+
+The card will show your current vehicle position as a marker plus the full
+last-journey route drawn as a red polyline.
+
+### Browse historical journeys
+
+Add the `calendar.h461hn_journeys` entity to a Calendar dashboard view in
+HA. Each journey appears as a calendar event with distance, duration,
+max/avg speed, waypoint count and a Google Maps link with start→end
+coordinates.
 
 ## Example Automations
 
