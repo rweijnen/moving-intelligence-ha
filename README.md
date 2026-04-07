@@ -2,20 +2,25 @@
 
 A comprehensive Home Assistant integration for [Moving Intelligence](https://movingintelligence.com/) vehicle tracking and security devices (Mi50, MiBlock).
 
-> **Status**: Early development. Phase 1 (core MVP) is in place.
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=rweijnen&repository=moving-intelligence-ha&category=integration)
 
 ## Features
 
-- 🚗 **Live GPS tracking** — current position with address resolution
+- 🚗 **Live GPS tracking** — current position with address resolution, pushed in real-time over WebSocket (no polling lag)
 - ⚡ **Speed sensor** — current vehicle speed
 - 🔋 **Battery monitoring** — vehicle battery voltage
 - 🛣️ **Journey recording** — store completed journeys with full waypoints, distance, max/avg speed (much more than the official app shows!)
 - 🔧 **Engine state** — binary sensor for engine on/off
+- 🚓 **Immobilizer control** — block/unblock the engine via switch entity
 - 📡 **Jamming detection** — alert when GPS/GSM signal is jammed
 - 🔔 **Alarm count** — number of unread alarm messages
 - 🎯 **Events** — `mi_home_journey_completed` for automations
 
 ## Installation (HACS)
+
+The fastest way: click the button above to open the repository directly in your Home Assistant HACS.
+
+Or manually:
 
 1. Add this repo as a custom repository in HACS:
    - HACS → Integrations → ⋮ → Custom repositories
@@ -113,15 +118,15 @@ automation:
 
 ## Roadmap
 
-- [ ] Phase 2: Immobilizer switch entity (block/unblock engine)
-- [ ] Phase 2: Alarm message sensor with details
-- [ ] Phase 3: Custom Lovelace card for journey map visualization
-- [ ] Phase 4: Calendar entity for journey history
-- [ ] Phase 4: Push API webhook receiver for faster updates
+- [x] Immobilizer switch (block/unblock engine)
+- [x] STOMP push for real-time position updates
+- [ ] Custom Lovelace card for journey map visualization
+- [ ] Calendar entity for journey history
+- [ ] Alarm message details sensor
 
 ## How it works
 
-This integration uses the same internal API that the official Moving Intelligence mobile app uses (`app.movingintelligence.com`), authenticating with your account credentials and maintaining a session cookie. It polls live data periodically and detects journey boundaries to record complete trip data including all GPS waypoints with per-point speed.
+This integration uses the same internal API that the official Moving Intelligence mobile app uses (`app.movingintelligence.com`), authenticating with your account credentials and maintaining a session cookie. Live position updates arrive in real time over a STOMP-over-WebSocket connection (the same channel the mobile app uses); slower-changing data like battery voltage, immobilizer status, and alarm messages are refreshed every few minutes. Journey boundaries are detected from the live stream and recorded with all GPS waypoints and per-point speed.
 
 The official REST API (`api-app.movingintelligence.com`) is also supported as an optional supplementary data source if you provide an API key — but the integration is fully functional without it.
 
