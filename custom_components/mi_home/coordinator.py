@@ -122,8 +122,20 @@ class MiHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._journeys.get(str(entity_id), [])
 
     def get_selected_date(self, entity_id: int) -> date:
-        """Return the user-selected date for journey filtering (defaults to today)."""
-        return self._selected_dates.get(entity_id) or date.today()
+        """Return the user-selected date for journey filtering.
+
+        Defaults to the date of the most recent stored journey, or today if
+        none exist. This makes the map "just work" right after install: the
+        user doesn't have to know which day to pick to see their last trip.
+        """
+        if entity_id in self._selected_dates:
+            return self._selected_dates[entity_id]
+        journeys = self.get_journeys(entity_id)
+        if journeys:
+            last_ts = journeys[-1].get("start_time")
+            if last_ts:
+                return datetime.fromtimestamp(last_ts, tz=timezone.utc).date()
+        return date.today()
 
     def set_selected_date(self, entity_id: int, value: date) -> None:
         """Update the selected date and notify listeners (for date-filtered sensor)."""
