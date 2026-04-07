@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Moving Intelligence Login",
+        "description": "Enter your Moving Intelligence account credentials.",
+        "data": {
+          "email": "Email address",
+          "password": "Password",
+          "api_key": "API key (optional)"
+        },
+        "data_description": {
+          "api_key": "Optional. Request at aftersales@movingintelligence.nl for more stable data access."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "no_vehicles": "No vehicles found on this account.",
+      "unknown": "Unexpected error. Check the logs."
+    },
+    "abort": {
+      "already_configured": "This account is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Moving Intelligence Options",
+        "data": {
+          "scan_interval": "Update interval (seconds)",
+          "max_journeys": "Maximum stored journeys"
+        },
+        "data_description": {
+          "scan_interval": "How often to poll for updates (30–300 seconds).",
+          "max_journeys": "Maximum number of journeys to keep per vehicle (10–1000)."
+        }
+      }
+    }
+  }
+}

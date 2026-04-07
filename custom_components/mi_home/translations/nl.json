@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Moving Intelligence Inloggen",
+        "description": "Voer je Moving Intelligence inloggegevens in.",
+        "data": {
+          "email": "E-mailadres",
+          "password": "Wachtwoord",
+          "api_key": "API-sleutel (optioneel)"
+        },
+        "data_description": {
+          "api_key": "Optioneel. Vraag aan bij aftersales@movingintelligence.nl voor stabielere datatoegang."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Onjuist e-mailadres of wachtwoord.",
+      "no_vehicles": "Geen voertuigen gevonden op dit account.",
+      "unknown": "Onverwachte fout. Controleer de logs."
+    },
+    "abort": {
+      "already_configured": "Dit account is al geconfigureerd."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Moving Intelligence Opties",
+        "data": {
+          "scan_interval": "Update-interval (seconden)",
+          "max_journeys": "Maximum opgeslagen ritten"
+        },
+        "data_description": {
+          "scan_interval": "Hoe vaak er gepolld wordt voor updates (30–300 seconden).",
+          "max_journeys": "Maximum aantal ritten dat per voertuig bewaard wordt (10–1000)."
+        }
+      }
+    }
+  }
+}
