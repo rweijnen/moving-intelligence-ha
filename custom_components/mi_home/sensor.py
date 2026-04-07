@@ -176,6 +176,35 @@ def _journeys_for_date_attrs(
         })
 
     attrs["geojson"] = {"type": "FeatureCollection", "features": features}
+
+    # Separate FeatureCollections for start and end Point markers, so the
+    # dashboard can render them as different-colored layers via ha-map-card.
+    starts: list[dict] = []
+    ends: list[dict] = []
+    for j in journeys:
+        wps = j.get("waypoints") or []
+        if len(wps) < 2:
+            continue
+        first = wps[0]
+        last = wps[-1]
+        starts.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [round(first["lon"], 6), round(first["lat"], 6)],
+            },
+            "properties": {"kind": "start"},
+        })
+        ends.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [round(last["lon"], 6), round(last["lat"], 6)],
+            },
+            "properties": {"kind": "end"},
+        })
+    attrs["geojson_starts"] = {"type": "FeatureCollection", "features": starts}
+    attrs["geojson_ends"] = {"type": "FeatureCollection", "features": ends}
     return attrs
 
 
