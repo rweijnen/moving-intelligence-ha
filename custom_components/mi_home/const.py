@@ -54,4 +54,4 @@ COORD_BATTERY_INTERVAL = 300  # seconds between battery/miblock polls
 COORD_SCALE = 1_000_000
 
 # Platforms
-PLATFORMS = ["device_tracker", "sensor", "binary_sensor"]
+PLATFORMS = ["device_tracker", "sensor", "binary_sensor", "switch"]

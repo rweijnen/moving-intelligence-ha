@@ -9,6 +9,7 @@ from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 
 from .api import MiAuthError, MiSessionClient
+from .api_rest import MiRestClient
 from .const import (
     CONF_API_KEY,
     CONF_EMAIL,
@@ -51,7 +52,7 @@ class MiHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(email.lower())
             self._abort_if_unique_id_configured()
 
-            # Validate by attempting login
+            # Validate session credentials by attempting login
             try:
                 async with MiSessionClient() as client:
                     await client.login(email, password)
@@ -65,6 +66,23 @@ class MiHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not entities:
                     errors["base"] = "no_vehicles"
                 else:
+                    # If an API key was provided, validate it but don't fail
+                    # the whole config if it's invalid — log a warning instead
+                    if api_key:
+                        try:
+                            async with MiRestClient(email, api_key) as rest:
+                                if not await rest.test_credentials():
+                                    _LOGGER.warning(
+                                        "API key provided but validation failed; "
+                                        "session-only mode will be used"
+                                    )
+                                    api_key = ""
+                        except Exception:
+                            _LOGGER.warning(
+                                "API key validation failed; session-only mode will be used"
+                            )
+                            api_key = ""
+
                     return self.async_create_entry(
                         title=email,
                         data={
