@@ -76,6 +76,9 @@
       "last_journey_avg_speed": {
         "name": "Last journey avg speed"
       },
+      "journeys_for_date": {
+        "name": "Journeys for selected date"
+      },
       "alarm_count": {
         "name": "Alarm count"
       }
@@ -96,6 +99,11 @@
     "calendar": {
       "journeys": {
         "name": "Journeys"
+      }
+    },
+    "date": {
+      "journey_date": {
+        "name": "Journey date"
       }
     }
   }

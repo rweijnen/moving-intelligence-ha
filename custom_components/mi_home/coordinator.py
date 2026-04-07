@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
 from math import atan2, cos, radians, sin, sqrt
 from typing import Any
 
@@ -104,6 +104,7 @@ class MiHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._alarm_messages: list = []
         self._live_data: dict[int, dict] = {}
         self._last_save_time: float = 0.0
+        self._selected_dates: dict[int, date] = {}  # entity_id → user-selected date
 
     @property
     def client(self) -> MiSessionClient:
@@ -119,6 +120,30 @@ class MiHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def get_journeys(self, entity_id: int) -> list[dict]:
         return self._journeys.get(str(entity_id), [])
+
+    def get_selected_date(self, entity_id: int) -> date:
+        """Return the user-selected date for journey filtering (defaults to today)."""
+        return self._selected_dates.get(entity_id) or date.today()
+
+    def set_selected_date(self, entity_id: int, value: date) -> None:
+        """Update the selected date and notify listeners (for date-filtered sensor)."""
+        self._selected_dates[entity_id] = value
+        self.async_update_listeners()
+        self.hass.async_create_background_task(
+            self._maybe_save_store(force=True),
+            name=f"{DOMAIN}_save_selected_date",
+        )
+
+    def get_journeys_on_date(self, entity_id: int, target: date) -> list[dict]:
+        """Return all stored journeys whose start time falls on the given date."""
+        result = []
+        for j in self.get_journeys(entity_id):
+            ts = j.get("start_time")
+            if not ts:
+                continue
+            if datetime.fromtimestamp(ts, tz=timezone.utc).date() == target:
+                result.append(j)
+        return result
 
     # -- Setup / shutdown --
 
@@ -421,6 +446,13 @@ class MiHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_route_start = {
             int(k): v for k, v in stored.get("last_route_start", {}).items()
         }
+        # Selected dates: stored as ISO strings → convert back to date objects
+        self._selected_dates = {}
+        for k, v in stored.get("selected_dates", {}).items():
+            try:
+                self._selected_dates[int(k)] = date.fromisoformat(v)
+            except (ValueError, TypeError):
+                pass
 
     async def _maybe_save_store(self, force: bool = False) -> None:
         """Persist data to Store, throttled to once per minute unless forced."""
@@ -433,5 +465,8 @@ class MiHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "session_cookie": self._session_cookies,
             "last_route_start": {
                 str(k): v for k, v in self._last_route_start.items()
+            },
+            "selected_dates": {
+                str(k): v.isoformat() for k, v in self._selected_dates.items()
             },
         })

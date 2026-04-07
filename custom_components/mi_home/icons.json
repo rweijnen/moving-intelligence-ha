@@ -27,6 +27,9 @@
       "last_journey_avg_speed": {
         "default": "mdi:speedometer-medium"
       },
+      "journeys_for_date": {
+        "default": "mdi:map-clock-outline"
+      },
       "alarm_count": {
         "default": "mdi:alarm-light"
       }
@@ -56,6 +59,11 @@
     "calendar": {
       "journeys": {
         "default": "mdi:road-variant"
+      }
+    },
+    "date": {
+      "journey_date": {
+        "default": "mdi:calendar"
       }
     }
   }

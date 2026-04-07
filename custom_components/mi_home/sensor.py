@@ -94,6 +94,91 @@ def _journey_avg_speed(coord: MiHomeCoordinator, eid: int) -> int | None:
     return j.get("avg_speed") if j else None
 
 
+# --- Date-filtered journey rendering ---
+
+# HA enforces a 16KB limit per state attribute. We budget 12KB for the
+# GeoJSON FeatureCollection, leaving headroom for the rest of the state.
+_GEOJSON_BUDGET_BYTES = 12_000
+_BYTES_PER_COORD = 23  # rough size of "[6.123456,51.123456],"
+_BYTES_PER_FEATURE_OVERHEAD = 250  # type/properties wrapper
+
+
+def _downsample(waypoints: list[dict], target: int) -> list[dict]:
+    """Reduce a waypoint list to roughly target points by uniform sampling."""
+    n = len(waypoints)
+    if n <= target or target < 2:
+        return waypoints
+    step = (n - 1) / (target - 1)
+    return [waypoints[round(i * step)] for i in range(target)]
+
+
+def _journeys_for_date(coord: MiHomeCoordinator, eid: int) -> list[dict]:
+    target = coord.get_selected_date(eid)
+    return coord.get_journeys_on_date(eid, target)
+
+
+def _journeys_for_date_count(coord: MiHomeCoordinator, eid: int) -> int:
+    return len(_journeys_for_date(coord, eid))
+
+
+def _journeys_for_date_attrs(
+    coord: MiHomeCoordinator, eid: int
+) -> dict[str, Any]:
+    target = coord.get_selected_date(eid)
+    journeys = _journeys_for_date(coord, eid)
+    attrs: dict[str, Any] = {
+        "selected_date": target.isoformat(),
+        "journey_count": len(journeys),
+    }
+    if not journeys:
+        attrs["geojson"] = {"type": "FeatureCollection", "features": []}
+        return attrs
+
+    # Decide how many waypoints each feature can carry, given the budget.
+    n = len(journeys)
+    available = _GEOJSON_BUDGET_BYTES - n * _BYTES_PER_FEATURE_OVERHEAD
+    if available < 100:
+        # Too many journeys for the budget — degrade gracefully.
+        max_points = 10
+    else:
+        max_points = max(20, min(300, available // (n * _BYTES_PER_COORD)))
+
+    features = []
+    for j in journeys:
+        wps = j.get("waypoints") or []
+        if len(wps) < 2:
+            continue
+        sampled = _downsample(wps, max_points)
+        coords = [
+            [round(w["lon"], 6), round(w["lat"], 6)]
+            for w in sampled
+            if w.get("lat") is not None and w.get("lon") is not None
+        ]
+        if len(coords) < 2:
+            continue
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": coords},
+            "properties": {
+                "start_time": (
+                    datetime.fromtimestamp(j["start_time"], tz=timezone.utc).isoformat()
+                    if j.get("start_time") else None
+                ),
+                "end_time": (
+                    datetime.fromtimestamp(j["end_time"], tz=timezone.utc).isoformat()
+                    if j.get("end_time") else None
+                ),
+                "distance_km": j.get("distance_km"),
+                "max_speed": j.get("max_speed"),
+                "avg_speed": j.get("avg_speed"),
+                "waypoint_count": len(coords),
+            },
+        })
+
+    attrs["geojson"] = {"type": "FeatureCollection", "features": features}
+    return attrs
+
+
 def _journey_attrs(coord: MiHomeCoordinator, eid: int) -> dict[str, Any]:
     journeys = coord.get_journeys(eid)
     if not journeys:
@@ -195,6 +280,12 @@ SENSOR_DESCRIPTIONS: tuple[MiSensorDescription, ...] = (
         translation_key="last_journey_avg_speed",
         native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
         value_fn=_journey_avg_speed,
+    ),
+    MiSensorDescription(
+        key="journeys_for_date",
+        translation_key="journeys_for_date",
+        value_fn=_journeys_for_date_count,
+        attrs_fn=_journeys_for_date_attrs,
     ),
     MiSensorDescription(
         key="alarm_count",

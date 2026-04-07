@@ -76,6 +76,9 @@
       "last_journey_avg_speed": {
         "name": "Laatste rit gem snelheid"
       },
+      "journeys_for_date": {
+        "name": "Ritten op gekozen datum"
+      },
       "alarm_count": {
         "name": "Aantal alarmen"
       }
@@ -96,6 +99,11 @@
     "calendar": {
       "journeys": {
         "name": "Ritten"
+      }
+    },
+    "date": {
+      "journey_date": {
+        "name": "Rit datum"
       }
     }
   }

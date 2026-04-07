@@ -87,12 +87,56 @@ Data:
 
 ## Dashboard examples
 
-### Show the last driven route on a map
+The integration provides three building blocks for visualizing journeys, all
+working together with [ha-map-card](https://github.com/nathan-gs/ha-map-card)
+(HACS frontend plugin):
 
-The `last_journey_distance` sensor exposes the full waypoint trail as a
-GeoJSON `LineString` in the `geojson` attribute. With
-[ha-map-card](https://github.com/nathan-gs/ha-map-card) (HACS frontend
-plugin), you can render the route on a map:
+| Building block | What it gives you |
+|---|---|
+| `sensor.<licence>_last_journey_distance` (attr: `geojson`) | Always shows the full route of the most recent journey |
+| `date.<licence>_journey_date` + `sensor.<licence>_journeys_for_date` (attr: `geojson`) | Pick any date, see all journeys driven that day |
+| `calendar.<licence>_journeys` | Browse all stored journeys with start/end times, distance, max/avg speed |
+
+### Recipe — full journey browser dashboard
+
+```yaml
+type: vertical-stack
+cards:
+  # Top: date picker
+  - type: entities
+    title: Journey browser
+    entities:
+      - entity: date.h461hn_journey_date
+
+  # Middle: map showing routes for the picked date
+  - type: custom:map-card
+    entities:
+      - entity: device_tracker.h461hn_location
+    geojson:
+      - entity: sensor.h461hn_journeys_for_date
+        attribute: geojson
+        color: "#df002b"
+    zoom: 12
+
+  # Bottom: calendar with the trip list
+  - type: calendar
+    entities:
+      - calendar.h461hn_journeys
+```
+
+Pick a date in the date entity at the top → the map shows all routes from
+that day → the calendar below gives you the full month's trip list with
+distance, duration, max/avg speed for each.
+
+> **Note**: HA's calendar view doesn't fire any event when you click an
+> entry, so we can't auto-update the date picker on calendar click. The
+> intended flow is: glance at the calendar to find the trip you want, set
+> the date picker to that day. A future custom Lovelace card may add the
+> click-to-jump shortcut.
+
+### Recipe — just the latest journey
+
+If you only want to see the most recent route without any filtering:
 
 ```yaml
 type: custom:map-card
@@ -105,15 +149,20 @@ geojson:
 zoom: 12
 ```
 
-The card will show your current vehicle position as a marker plus the full
-last-journey route drawn as a red polyline.
+### How journeys are stored and rendered
 
-### Browse historical journeys
+Storage and rendering are deliberately decoupled:
 
-Add the `calendar.h461hn_journeys` entity to a Calendar dashboard view in
-HA. Each journey appears as a calendar event with distance, duration,
-max/avg speed, waypoint count and a Google Maps link with start→end
-coordinates.
+- **Storage**: every completed journey is kept at full resolution in HA's
+  Store (typically ~5 KB per journey). Up to `max_journeys` (default 100,
+  configurable to 1000) are kept; oldest are evicted FIFO.
+- **Rendering**: the `geojson` attributes only ever contain *one selected
+  set* of journeys at a time, sized to fit HA's 16 KB attribute limit. The
+  date-filtered sensor will downsample waypoints proportionally if a single
+  day has many trips, so you always get a usable map.
+
+The full waypoints stay in storage — they're only downsampled when rendered
+to a sensor attribute, never thrown away.
 
 ## Example Automations
 
