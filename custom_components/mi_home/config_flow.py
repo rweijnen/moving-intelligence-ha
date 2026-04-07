@@ -6,7 +6,8 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.helpers import selector
 
 from .api import MiAuthError, MiSessionClient
 from .api_rest import MiRestClient
@@ -23,13 +24,27 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-STEP_USER_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_EMAIL): str,
-        vol.Required(CONF_PASSWORD): str,
-        vol.Optional(CONF_API_KEY): str,
-    }
-)
+
+def _user_schema(defaults: dict[str, str] | None = None) -> vol.Schema:
+    """Build the credentials form schema."""
+    defaults = defaults or {}
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_EMAIL, default=defaults.get(CONF_EMAIL, "")
+            ): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.EMAIL)
+            ),
+            vol.Required(CONF_PASSWORD): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+            ),
+            vol.Optional(
+                CONF_API_KEY, default=defaults.get(CONF_API_KEY, "")
+            ): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+            ),
+        }
+    )
 
 
 class MiHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -39,26 +54,23 @@ class MiHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Step 1: credentials."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            email = user_input[CONF_EMAIL]
+            email = user_input[CONF_EMAIL].strip().lower()
             password = user_input[CONF_PASSWORD]
-            api_key = user_input.get(CONF_API_KEY, "")
+            api_key = user_input.get(CONF_API_KEY, "").strip()
 
-            # Prevent duplicate entries for same email
-            await self.async_set_unique_id(email.lower())
+            await self.async_set_unique_id(email)
             self._abort_if_unique_id_configured()
 
-            # Validate session credentials by attempting login
             try:
                 async with MiSessionClient() as client:
                     await client.login(email, password)
                     context = await client.get_context()
 
-                # Check we got at least one entity (vehicle)
                 entities = [
                     r for r in context.get("rights", [])
                     if "entityPropertiesDTO" in r
@@ -66,20 +78,11 @@ class MiHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not entities:
                     errors["base"] = "no_vehicles"
                 else:
-                    # If an API key was provided, validate it but don't fail
-                    # the whole config if it's invalid — log a warning instead
                     if api_key:
-                        try:
-                            async with MiRestClient(email, api_key) as rest:
-                                if not await rest.test_credentials():
-                                    _LOGGER.warning(
-                                        "API key provided but validation failed; "
-                                        "session-only mode will be used"
-                                    )
-                                    api_key = ""
-                        except Exception:
+                        if not await self._validate_api_key(email, api_key):
                             _LOGGER.warning(
-                                "API key validation failed; session-only mode will be used"
+                                "API key validation failed; "
+                                "session-only mode will be used"
                             )
                             api_key = ""
 
@@ -100,27 +103,80 @@ class MiHomeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_SCHEMA,
+            data_schema=_user_schema(),
             errors=errors,
         )
+
+    async def async_step_reauth(
+        self, entry_data: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle reauth when session credentials are no longer valid."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Prompt the user for new credentials."""
+        errors: dict[str, str] = {}
+        existing_entry = self._get_reauth_entry()
+        existing_email = (
+            existing_entry.data.get(CONF_EMAIL, "") if existing_entry else ""
+        )
+
+        if user_input is not None:
+            email = user_input[CONF_EMAIL].strip().lower()
+            password = user_input[CONF_PASSWORD]
+            api_key = user_input.get(CONF_API_KEY, "").strip()
+
+            try:
+                async with MiSessionClient() as client:
+                    await client.login(email, password)
+                if api_key and not await self._validate_api_key(email, api_key):
+                    api_key = ""
+            except MiAuthError:
+                errors["base"] = "invalid_auth"
+            except Exception:
+                _LOGGER.exception("Unexpected error during reauth")
+                errors["base"] = "unknown"
+            else:
+                return self.async_update_reload_and_abort(
+                    existing_entry,
+                    data={
+                        CONF_EMAIL: email,
+                        CONF_PASSWORD: password,
+                        CONF_API_KEY: api_key,
+                    },
+                )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=_user_schema({CONF_EMAIL: existing_email}),
+            errors=errors,
+        )
+
+    @staticmethod
+    async def _validate_api_key(email: str, api_key: str) -> bool:
+        """Test the optional REST API key. Returns True if valid."""
+        try:
+            async with MiRestClient(email, api_key) as rest:
+                return await rest.test_credentials()
+        except Exception:  # noqa: BLE001
+            return False
 
     @staticmethod
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> MiHomeOptionsFlow:
         """Return the options flow handler."""
-        return MiHomeOptionsFlow(config_entry)
+        return MiHomeOptionsFlow()
 
 
 class MiHomeOptionsFlow(config_entries.OptionsFlow):
     """Options flow for scan interval and journey settings."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self._entry = config_entry
-
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
@@ -130,13 +186,13 @@ class MiHomeOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Optional(
                         CONF_SCAN_INTERVAL,
-                        default=self._entry.options.get(
+                        default=self.config_entry.options.get(
                             CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
                         ),
                     ): vol.All(int, vol.Range(min=30, max=300)),
                     vol.Optional(
                         CONF_MAX_JOURNEYS,
-                        default=self._entry.options.get(
+                        default=self.config_entry.options.get(
                             CONF_MAX_JOURNEYS, DEFAULT_MAX_JOURNEYS
                         ),
                     ): vol.All(int, vol.Range(min=10, max=1000)),

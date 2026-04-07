@@ -1,0 +1,51 @@
+{
+  "entity": {
+    "device_tracker": {
+      "location": {
+        "default": "mdi:car"
+      }
+    },
+    "sensor": {
+      "speed": {
+        "default": "mdi:speedometer"
+      },
+      "address": {
+        "default": "mdi:map-marker"
+      },
+      "battery_voltage": {
+        "default": "mdi:car-battery"
+      },
+      "last_journey_distance": {
+        "default": "mdi:map-marker-distance"
+      },
+      "last_journey_duration": {
+        "default": "mdi:timer-outline"
+      },
+      "alarm_count": {
+        "default": "mdi:alarm-light"
+      }
+    },
+    "binary_sensor": {
+      "engine": {
+        "default": "mdi:engine-outline",
+        "state": {
+          "on": "mdi:engine"
+        }
+      },
+      "jammed": {
+        "default": "mdi:wifi",
+        "state": {
+          "on": "mdi:wifi-alert"
+        }
+      }
+    },
+    "switch": {
+      "immobilizer": {
+        "default": "mdi:engine-off-outline",
+        "state": {
+          "on": "mdi:engine-off"
+        }
+      }
+    }
+  }
+}

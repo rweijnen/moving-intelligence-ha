@@ -14,7 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .api import MiApiError
 from .const import DOMAIN
 from .coordinator import MiHomeCoordinator
-from .device_tracker import _device_info
+from .device_tracker import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,8 +47,7 @@ class MiImmobilizerSwitch(CoordinatorEntity[MiHomeCoordinator], SwitchEntity):
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Immobilizer"
-    _attr_icon = "mdi:engine-off"
+    _attr_translation_key = "immobilizer"
     _attr_device_class = SwitchDeviceClass.SWITCH
 
     def __init__(
@@ -62,7 +61,7 @@ class MiImmobilizerSwitch(CoordinatorEntity[MiHomeCoordinator], SwitchEntity):
         info = coordinator.entities_info.get(entity_id, {})
         licence = info.get("license", "unknown").replace("-", "").lower()
         self._attr_unique_id = f"{entry.entry_id}_{licence}_immobilizer"
-        self._attr_device_info = _device_info(entry, entity_id, info)
+        self._attr_device_info = build_device_info(entity_id, info)
 
     @property
     def _miblock(self) -> dict:

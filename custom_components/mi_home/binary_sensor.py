@@ -1,11 +1,13 @@
 """Binary sensor platform for Moving Intelligence."""
 from __future__ import annotations
 
-import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
+    BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -14,9 +16,40 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import MiHomeCoordinator
-from .device_tracker import _device_info
+from .device_tracker import build_device_info
 
-_LOGGER = logging.getLogger(__name__)
+
+@dataclass(frozen=True, kw_only=True)
+class MiBinarySensorDescription(BinarySensorEntityDescription):
+    """Description for an MI binary sensor."""
+
+    is_on_fn: Callable[[MiHomeCoordinator, int], bool | None]
+
+
+def _live(coord: MiHomeCoordinator, eid: int) -> dict:
+    return (coord.data or {}).get("live", {}).get(eid, {}) or {}
+
+
+def _miblock(coord: MiHomeCoordinator, eid: int) -> dict:
+    return (coord.data or {}).get("miblock", {}).get(eid, {}) or {}
+
+
+BINARY_SENSOR_DESCRIPTIONS: tuple[MiBinarySensorDescription, ...] = (
+    MiBinarySensorDescription(
+        key="engine",
+        translation_key="engine",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        is_on_fn=lambda c, e: _live(c, e).get("engineOn"),
+    ),
+    MiBinarySensorDescription(
+        key="jammed",
+        translation_key="jammed",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        is_on_fn=lambda c, e: (
+            _miblock(c, e).get("jammed") if _miblock(c, e) else None
+        ),
+    ),
+)
 
 
 async def async_setup_entry(
@@ -29,17 +62,16 @@ async def async_setup_entry(
     entities: list[BinarySensorEntity] = []
     for eid in coordinator.entity_ids:
         info = coordinator.entities_info.get(eid, {})
-        entities.extend([
-            MiEngineSensor(coordinator, entry, eid, info),
-            MiJammedSensor(coordinator, entry, eid, info),
-        ])
+        for desc in BINARY_SENSOR_DESCRIPTIONS:
+            entities.append(MiBinarySensor(coordinator, entry, eid, info, desc))
     async_add_entities(entities)
 
 
-class _MiBinarySensorBase(CoordinatorEntity[MiHomeCoordinator], BinarySensorEntity):
-    """Base class for MI binary sensors."""
+class MiBinarySensor(CoordinatorEntity[MiHomeCoordinator], BinarySensorEntity):
+    """Generic MI binary sensor driven by entity description."""
 
     _attr_has_entity_name = True
+    entity_description: MiBinarySensorDescription
 
     def __init__(
         self,
@@ -47,46 +79,17 @@ class _MiBinarySensorBase(CoordinatorEntity[MiHomeCoordinator], BinarySensorEnti
         entry: ConfigEntry,
         entity_id: int,
         info: dict,
-        key: str,
+        description: MiBinarySensorDescription,
     ) -> None:
         super().__init__(coordinator)
+        self.entity_description = description
         self._mi_entity_id = entity_id
         licence = info.get("license", "unknown").replace("-", "").lower()
-        self._attr_unique_id = f"{entry.entry_id}_{licence}_{key}"
-        self._attr_device_info = _device_info(entry, entity_id, info)
-
-
-class MiEngineSensor(_MiBinarySensorBase):
-    """Engine running binary sensor."""
-
-    _attr_name = "Engine"
-    _attr_icon = "mdi:engine"
-    _attr_device_class = BinarySensorDeviceClass.RUNNING
-
-    def __init__(self, coordinator, entry, entity_id, info):
-        super().__init__(coordinator, entry, entity_id, info, "engine")
+        self._attr_unique_id = f"{entry.entry_id}_{licence}_{description.key}"
+        self._attr_device_info = build_device_info(entity_id, info)
 
     @property
     def is_on(self) -> bool | None:
-        data = self.coordinator.data or {}
-        live = data.get("live", {}).get(self._mi_entity_id, {})
-        return live.get("engineOn")
-
-
-class MiJammedSensor(_MiBinarySensorBase):
-    """Signal jammed binary sensor."""
-
-    _attr_name = "Jammed"
-    _attr_icon = "mdi:wifi-alert"
-    _attr_device_class = BinarySensorDeviceClass.PROBLEM
-
-    def __init__(self, coordinator, entry, entity_id, info):
-        super().__init__(coordinator, entry, entity_id, info, "jammed")
-
-    @property
-    def is_on(self) -> bool | None:
-        data = self.coordinator.data or {}
-        miblock = data.get("miblock", {}).get(self._mi_entity_id, {})
-        if not miblock:
-            return None
-        return miblock.get("jammed", False)
+        return self.entity_description.is_on_fn(
+            self.coordinator, self._mi_entity_id
+        )

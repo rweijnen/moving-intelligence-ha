@@ -1,4 +1,15 @@
-"""DataUpdateCoordinator for Moving Intelligence."""
+"""DataUpdateCoordinator for Moving Intelligence.
+
+Architecture:
+- A slow REST poll (every COORD_FALLBACK_INTERVAL seconds, default 5 min)
+  fetches battery voltage, immobilizer status, alarm messages, and a fresh
+  live snapshot per entity. This is the fallback path.
+- A persistent STOMP-over-WebSocket connection subscribes to
+  /user/topic/positionEvent and pushes live position updates into the
+  coordinator state via async_set_updated_data().
+- Journey detection runs on every live update (push or poll) and persists
+  completed journeys to the HA Store.
+"""
 from __future__ import annotations
 
 import logging
@@ -9,20 +20,22 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import MiApiError, MiAuthError, MiSessionClient
+from .api import MiApiError, MiAuthError, MiSessionClient, _scale_coordinates
 from .const import (
     CONF_EMAIL,
     CONF_MAX_JOURNEYS,
     CONF_PASSWORD,
-    CONF_SCAN_INTERVAL,
-    COORD_BATTERY_INTERVAL,
+    COORD_FALLBACK_INTERVAL,
     DEFAULT_MAX_JOURNEYS,
-    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    STOMP_TOPIC_LIVE_ROUTE,
+    STOMP_TOPIC_POSITION_EVENT,
 )
+from .stomp import MiStompClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,7 +47,10 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     r = 6371.0
     dlat = radians(lat2 - lat1)
     dlon = radians(lon2 - lon1)
-    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    a = (
+        sin(dlat / 2) ** 2
+        + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    )
     return r * 2 * atan2(sqrt(a), sqrt(1 - a))
 
 
@@ -55,68 +71,81 @@ def _calculate_journey_stats(waypoints: list[dict]) -> dict:
     return {
         "distance_km": round(total_dist, 2),
         "max_speed": max(speeds) if speeds else 0,
-        "avg_speed": round(sum(moving_speeds) / len(moving_speeds)) if moving_speeds else 0,
+        "avg_speed": round(sum(moving_speeds) / len(moving_speeds))
+        if moving_speeds
+        else 0,
     }
 
 
-class MiHomeCoordinator(DataUpdateCoordinator):
-    """Coordinator that polls MI live API and detects journeys."""
+class MiHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Coordinator that polls MI live API and streams updates over STOMP."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
-        interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=interval),
+            config_entry=entry,
+            update_interval=timedelta(seconds=COORD_FALLBACK_INTERVAL),
         )
-        self._entry = entry
         self._store = Store(hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}")
         self._client = MiSessionClient()
+        self._stomp: MiStompClient | None = None
         self._store_loaded = False
         self._session_cookies: dict[str, str] = {}
         self._entity_ids: list[int] = []
-        self._entities_info: dict[int, dict] = {}  # entity_id → entityPropertiesDTO
-        self._last_route_start: dict[int, int | None] = {}  # entity_id → routeStartDate
+        self._entities_info: dict[int, dict] = {}
+        self._last_route_start: dict[int, int | None] = {}
         self._last_engine_on: dict[int, bool | None] = {}
         self._last_route_points: dict[int, list] = {}
-        self._journeys: dict[str, list[dict]] = {}  # str(entity_id) → journey list
-        self._last_battery_poll: float = 0.0
+        self._journeys: dict[str, list[dict]] = {}
         self._battery_data: dict[int, float | None] = {}
         self._miblock_data: dict[int, dict] = {}
         self._alarm_messages: list = []
-        self._context: dict = {}
+        self._live_data: dict[int, dict] = {}
+        self._last_save_time: float = 0.0
 
     @property
     def client(self) -> MiSessionClient:
-        """Return the API client."""
         return self._client
 
     @property
     def entity_ids(self) -> list[int]:
-        """Return tracked entity IDs."""
         return self._entity_ids
 
     @property
     def entities_info(self) -> dict[int, dict]:
-        """Return entity properties keyed by ID."""
         return self._entities_info
 
     def get_journeys(self, entity_id: int) -> list[dict]:
-        """Return stored journeys for an entity."""
         return self._journeys.get(str(entity_id), [])
 
+    # -- Setup / shutdown --
+
     async def _async_setup(self) -> None:
-        """Initialize the client session."""
-        await self._client.__aenter__()
+        """Initialize the API client and load persistent state.
+
+        Called once by HA before the first refresh.
+        """
+        await self._client.connect()
+        await self._load_store()
+        self._store_loaded = True
 
     async def async_shutdown(self) -> None:
-        """Clean up the client session."""
-        await self._client.__aexit__(None, None, None)
+        """Stop STOMP and close the API client."""
+        await super().async_shutdown()
+        if self._stomp:
+            await self._stomp.stop()
+            self._stomp = None
+        await self._client.close()
+
+    # -- Session management --
 
     async def _ensure_session(self) -> None:
-        """Ensure we have a valid session, re-login if needed."""
-        # Try restoring cookies first
+        """Ensure we have a valid session, re-login if needed.
+
+        Raises ConfigEntryAuthFailed on credential failure → triggers reauth.
+        """
         if self._session_cookies:
             self._client.load_cookies(self._session_cookies)
 
@@ -124,77 +153,127 @@ class MiHomeCoordinator(DataUpdateCoordinator):
             return
 
         _LOGGER.debug("Session expired, re-logging in")
-        email = self._entry.data[CONF_EMAIL]
-        password = self._entry.data[CONF_PASSWORD]
+        email = self.config_entry.data[CONF_EMAIL]
+        password = self.config_entry.data[CONF_PASSWORD]
         try:
             await self._client.login(email, password)
-            self._session_cookies = self._client.export_cookies()
-            await self._save_store()
         except MiAuthError as e:
-            raise UpdateFailed(f"Login failed: {e}") from e
+            raise ConfigEntryAuthFailed(f"Login failed: {e}") from e
+        self._session_cookies = self._client.export_cookies()
+        await self._maybe_save_store(force=True)
+
+        # Update STOMP token if needed
+        if self._stomp:
+            new_token = self._client.get_session_id()
+            if new_token:
+                self._stomp.update_session_id(new_token)
+
+    # -- STOMP push handling --
+
+    async def _start_stomp(self) -> None:
+        """Start the STOMP client and subscribe to live topics."""
+        token = self._client.get_session_id()
+        if not token:
+            _LOGGER.warning("No JSESSIONID available — cannot start STOMP push")
+            return
+        if self._stomp is not None:
+            return
+        self._stomp = MiStompClient(
+            session_id=token,
+            on_message=self._on_stomp_message,
+            on_state_change=self._on_stomp_state,
+        )
+        await self._stomp.start()
+        await self._stomp.subscribe(STOMP_TOPIC_POSITION_EVENT)
+        await self._stomp.subscribe(STOMP_TOPIC_LIVE_ROUTE)
+
+    def _on_stomp_message(self, destination: str, body: dict) -> None:
+        """Handle a STOMP MESSAGE frame from the live topics."""
+        if destination not in (STOMP_TOPIC_POSITION_EVENT, STOMP_TOPIC_LIVE_ROUTE):
+            return
+        entity_id = body.get("entityId")
+        if not isinstance(entity_id, int):
+            return
+        # Scale coordinates from microdegrees
+        _scale_coordinates(body)
+        # Merge into existing live state (preserve any keys not in the push)
+        current = self._live_data.get(entity_id, {})
+        merged = {**current, **body}
+        self._live_data[entity_id] = merged
+        # Detect journey transitions
+        self._detect_journey(entity_id, merged)
+        # Push update to entities (no I/O, no await needed)
+        self.async_set_updated_data(self._build_data())
+
+    def _on_stomp_state(self, connected: bool) -> None:
+        if connected:
+            _LOGGER.info("STOMP push connected — live updates active")
+        else:
+            _LOGGER.debug("STOMP push disconnected — falling back to polling")
+
+    # -- Polling (fallback + slow data) --
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch all data from MI."""
-        # Load persistent store on first run
-        if not self._store_loaded:
-            await self._load_store()
-            self._store_loaded = True
-
-        # Initialize client session if needed
-        if self._client._session is None:
-            await self._async_setup()
-
+        """Slow REST poll: refresh battery, miblock, alarms, and live snapshot."""
         try:
             await self._ensure_session()
-        except UpdateFailed:
+        except ConfigEntryAuthFailed:
             raise
-        except Exception as e:
+        except MiApiError as e:
             raise UpdateFailed(f"Session error: {e}") from e
 
-        # Fetch context if we don't have entities yet
+        # First successful run: fetch context to discover entities
         if not self._entity_ids:
             try:
-                self._context = await self._client.get_context()
-                self._parse_context(self._context)
+                context = await self._client.get_context()
+                self._parse_context(context)
+            except MiAuthError as e:
+                raise ConfigEntryAuthFailed(str(e)) from e
             except MiApiError as e:
                 raise UpdateFailed(f"Failed to get context: {e}") from e
 
-        # Fetch live data per entity
-        live_data: dict[int, dict] = {}
+            # Start STOMP push now that we know who to listen for
+            await self._start_stomp()
+
+        # Refresh slow-changing data: live snapshot (in case STOMP missed
+        # something), battery, miblock, alarms.
         for eid in self._entity_ids:
             try:
                 live = await self._client.get_live(eid)
-                live_data[eid] = live
+                self._live_data[eid] = live
                 self._detect_journey(eid, live)
+            except MiAuthError as e:
+                raise ConfigEntryAuthFailed(str(e)) from e
             except MiApiError as e:
-                _LOGGER.warning("Failed to get live data for entity %s: %s", eid, e)
+                _LOGGER.warning("Live fetch failed for %s: %s", eid, e)
 
-        # Periodic: battery, miblock, alarms (every COORD_BATTERY_INTERVAL)
-        now = time.monotonic()
-        if now - self._last_battery_poll >= COORD_BATTERY_INTERVAL:
-            self._last_battery_poll = now
-            for eid in self._entity_ids:
-                try:
-                    self._battery_data[eid] = await self._client.get_battery_voltage(eid)
-                except MiApiError as e:
-                    _LOGGER.debug("Battery fetch failed for %s: %s", eid, e)
-                try:
-                    self._miblock_data[eid] = await self._client.get_miblock_status(eid)
-                except MiApiError as e:
-                    _LOGGER.debug("Miblock fetch failed for %s: %s", eid, e)
             try:
-                self._alarm_messages = await self._client.get_alarm_messages()
+                self._battery_data[eid] = await self._client.get_battery_voltage(eid)
             except MiApiError as e:
-                _LOGGER.debug("Alarm messages fetch failed: %s", e)
+                _LOGGER.debug("Battery fetch failed for %s: %s", eid, e)
 
-        # Save cookies periodically
+            try:
+                self._miblock_data[eid] = await self._client.get_miblock_status(eid)
+            except MiApiError as e:
+                _LOGGER.debug("Miblock fetch failed for %s: %s", eid, e)
+
+        try:
+            self._alarm_messages = await self._client.get_alarm_messages()
+        except MiApiError as e:
+            _LOGGER.debug("Alarm messages fetch failed: %s", e)
+
+        # Persist any cookie rotation
         new_cookies = self._client.export_cookies()
         if new_cookies != self._session_cookies:
             self._session_cookies = new_cookies
-            await self._save_store()
+            await self._maybe_save_store()
 
+        return self._build_data()
+
+    def _build_data(self) -> dict[str, Any]:
+        """Build the data dict that gets pushed to entities."""
         return {
-            "live": live_data,
+            "live": dict(self._live_data),
             "battery": dict(self._battery_data),
             "miblock": dict(self._miblock_data),
             "alarms": list(self._alarm_messages),
@@ -212,6 +291,8 @@ class MiHomeCoordinator(DataUpdateCoordinator):
                 self._entity_ids.append(eid)
                 self._entities_info[eid] = props
 
+    # -- Journey detection --
+
     def _detect_journey(self, entity_id: int, live: dict) -> None:
         """Detect journey boundaries and record completed journeys."""
         route_start = live.get("routeStartDate")
@@ -225,29 +306,28 @@ class MiHomeCoordinator(DataUpdateCoordinator):
         # Update tracking state
         self._last_route_start[entity_id] = route_start
         self._last_engine_on[entity_id] = engine_on
-        self._last_route_points[entity_id] = route_points
+        if route_points:
+            self._last_route_points[entity_id] = route_points
 
-        # Skip first poll — just record initial state
-        if prev_start is None:
+        # First observation: just remember initial state
+        if prev_start is None and prev_engine is None:
             return
 
-        # Journey completed: routeStartDate changed (new journey started, old one is done)
-        # OR engine turned off (end of journey)
         journey_ended = False
         points_to_save = prev_points
 
-        if route_start != prev_start and prev_points:
-            # New journey started → previous journey is complete
+        if route_start != prev_start and route_start is not None and prev_points:
+            # New journey ID seen → previous one is done, save its last-known points
             journey_ended = True
-        elif prev_engine is True and engine_on is False and prev_points:
-            # Engine turned off → journey ended
+        elif prev_engine is True and engine_on is False:
+            # Engine just turned off → use the most complete point set we have
             journey_ended = True
-            points_to_save = route_points  # use current points (they're the full journey)
+            points_to_save = route_points if route_points else prev_points
 
         if journey_ended and points_to_save:
-            self._record_journey(entity_id, live, points_to_save)
+            self._record_journey(entity_id, points_to_save)
 
-    def _record_journey(self, entity_id: int, live: dict, route_points: list) -> None:
+    def _record_journey(self, entity_id: int, route_points: list) -> None:
         """Record a completed journey to the store."""
         waypoints = [
             {
@@ -284,23 +364,29 @@ class MiHomeCoordinator(DataUpdateCoordinator):
         key = str(entity_id)
         if key not in self._journeys:
             self._journeys[key] = []
-
+        # Skip duplicate if start_time already recorded
+        if any(j.get("start_time") == journey["start_time"] for j in self._journeys[key]):
+            return
         self._journeys[key].append(journey)
 
         # FIFO eviction
-        max_journeys = self._entry.options.get(CONF_MAX_JOURNEYS, DEFAULT_MAX_JOURNEYS)
+        max_journeys = self.config_entry.options.get(
+            CONF_MAX_JOURNEYS, DEFAULT_MAX_JOURNEYS
+        )
         while len(self._journeys[key]) > max_journeys:
             self._journeys[key].pop(0)
 
-        # Fire event
+        # Fire HA event for automations
         self.hass.bus.async_fire(
             f"{DOMAIN}_journey_completed",
             {
-                "entity_id": entity_id,
+                "mi_entity_id": entity_id,
                 "distance_km": stats["distance_km"],
                 "max_speed": stats["max_speed"],
                 "avg_speed": stats["avg_speed"],
-                "duration_min": round((journey["end_time"] - journey["start_time"]) / 60),
+                "duration_min": round(
+                    (journey["end_time"] - journey["start_time"]) / 60
+                ),
                 "waypoint_count": len(waypoints),
             },
         )
@@ -310,8 +396,12 @@ class MiHomeCoordinator(DataUpdateCoordinator):
             entity_id, stats["distance_km"], len(waypoints),
         )
 
-        # Persist
-        self.hass.async_create_task(self._save_store())
+        self.hass.async_create_background_task(
+            self._maybe_save_store(force=True),
+            name=f"{DOMAIN}_save_journey",
+        )
+
+    # -- Persistent storage --
 
     async def _load_store(self) -> None:
         """Load persistent data from Store."""
@@ -322,8 +412,12 @@ class MiHomeCoordinator(DataUpdateCoordinator):
             int(k): v for k, v in stored.get("last_route_start", {}).items()
         }
 
-    async def _save_store(self) -> None:
-        """Persist data to Store."""
+    async def _maybe_save_store(self, force: bool = False) -> None:
+        """Persist data to Store, throttled to once per minute unless forced."""
+        now = time.monotonic()
+        if not force and (now - self._last_save_time) < 60:
+            return
+        self._last_save_time = now
         await self._store.async_save({
             "journeys": self._journeys,
             "session_cookie": self._session_cookies,

@@ -10,7 +10,16 @@
           "api_key": "API key (optional)"
         },
         "data_description": {
-          "api_key": "Optional. Request at aftersales@movingintelligence.nl for more stable data access."
+          "api_key": "Optional. Request at aftersales@movingintelligence.nl. The integration works fully without it."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Moving Intelligence",
+        "description": "Your saved credentials are no longer valid. Please enter them again.",
+        "data": {
+          "email": "Email address",
+          "password": "Password",
+          "api_key": "API key (optional)"
         }
       }
     },
@@ -20,7 +29,8 @@
       "unknown": "Unexpected error. Check the logs."
     },
     "abort": {
-      "already_configured": "This account is already configured."
+      "already_configured": "This account is already configured.",
+      "reauth_successful": "Re-authentication was successful."
     }
   },
   "options": {
@@ -28,13 +38,53 @@
       "init": {
         "title": "Moving Intelligence Options",
         "data": {
-          "scan_interval": "Update interval (seconds)",
+          "scan_interval": "Fallback poll interval (seconds)",
           "max_journeys": "Maximum stored journeys"
         },
         "data_description": {
-          "scan_interval": "How often to poll for updates (30–300 seconds).",
+          "scan_interval": "How often to refresh slow-changing data when STOMP push is unavailable (30–300 seconds).",
           "max_journeys": "Maximum number of journeys to keep per vehicle (10–1000)."
         }
+      }
+    }
+  },
+  "entity": {
+    "device_tracker": {
+      "location": {
+        "name": "Location"
+      }
+    },
+    "sensor": {
+      "speed": {
+        "name": "Speed"
+      },
+      "address": {
+        "name": "Address"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
+      "last_journey_distance": {
+        "name": "Last journey distance"
+      },
+      "last_journey_duration": {
+        "name": "Last journey duration"
+      },
+      "alarm_count": {
+        "name": "Alarm count"
+      }
+    },
+    "binary_sensor": {
+      "engine": {
+        "name": "Engine"
+      },
+      "jammed": {
+        "name": "Jammed"
+      }
+    },
+    "switch": {
+      "immobilizer": {
+        "name": "Immobilizer"
       }
     }
   }

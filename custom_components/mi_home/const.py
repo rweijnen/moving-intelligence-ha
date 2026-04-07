@@ -4,6 +4,8 @@ DOMAIN = "mi_home"
 
 # Session-based API (primary)
 SESSION_API_BASE = "https://app.movingintelligence.com"
+WEBSOCKET_PATH = "/app/websocket"
+REQUEST_TIMEOUT = 30  # seconds
 SESSION_API_LOGIN = "rest/v1/account/logindtowithclientandversion"
 SESSION_API_IS_LOGGED_IN = "rest/v1/account/isloggedin"
 SESSION_API_LOGOUT = "rest/v1/account/logout"
@@ -49,9 +51,17 @@ CLIENT_OS_VERSION = "14"
 COORD_LIVE = "live"
 COORD_CONTEXT = "context"
 COORD_BATTERY_INTERVAL = 300  # seconds between battery/miblock polls
+COORD_FALLBACK_INTERVAL = 300  # slow REST poll when STOMP push is active
 
 # Coordinate scale factor (API returns microdegrees)
 COORD_SCALE = 1_000_000
+
+# STOMP topics
+STOMP_TOPIC_POSITION_EVENT = "/user/topic/positionEvent"
+STOMP_TOPIC_LIVE_ROUTE = "/user/topic/liveRouteEvent"
+STOMP_TOPIC_ENTITY_CHANGED = "/user/topic/entityChanged"
+STOMP_HEARTBEAT_MS = 4000
+STOMP_RECONNECT_DELAY = 5  # seconds
 
 # Platforms
 PLATFORMS = ["device_tracker", "sensor", "binary_sensor", "switch"]

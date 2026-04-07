@@ -9,12 +9,14 @@ import logging
 from typing import Any
 
 import aiohttp
+from yarl import URL
 
 from .const import (
     CLIENT_OS_VERSION,
     CLIENT_PLATFORM,
     CLIENT_VERSION,
     COORD_SCALE,
+    REQUEST_TIMEOUT,
     SESSION_API_ALARM_BLOCK_GET,
     SESSION_API_ALARM_BLOCK_SET,
     SESSION_API_ALARM_BLOCK_UNSET,
@@ -47,20 +49,36 @@ class MiSessionClient:
 
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         self._external_session = session is not None
-        self._session = session
+        self._session: aiohttp.ClientSession | None = session
         self._base = SESSION_API_BASE
+        self._timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+
+    @property
+    def is_connected(self) -> bool:
+        """Return True if the underlying HTTP session is open."""
+        return self._session is not None and not self._session.closed
+
+    async def connect(self) -> None:
+        """Open the underlying HTTP session if not already open."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                cookie_jar=aiohttp.CookieJar(unsafe=True),
+                timeout=self._timeout,
+            )
+            self._external_session = False
+
+    async def close(self) -> None:
+        """Close the underlying HTTP session if we own it."""
+        if not self._external_session and self._session and not self._session.closed:
+            await self._session.close()
+        self._session = None
 
     async def __aenter__(self) -> MiSessionClient:
-        if self._session is None:
-            self._session = aiohttp.ClientSession(
-                cookie_jar=aiohttp.CookieJar(unsafe=True)
-            )
+        await self.connect()
         return self
 
     async def __aexit__(self, *_: Any) -> None:
-        if not self._external_session and self._session:
-            await self._session.close()
-            self._session = None
+        await self.close()
 
     # -- Session management --
 
@@ -76,7 +94,10 @@ class MiSessionClient:
             "version": CLIENT_VERSION,
             "osVersion": CLIENT_OS_VERSION,
         }
-        resp_data = await self._post(SESSION_API_LOGIN, data)
+        try:
+            resp_data = await self._post(SESSION_API_LOGIN, data)
+        except MiApiError as e:
+            raise MiAuthError(f"Login failed: {e}") from e
         if resp_data is None:
             raise MiAuthError("Login returned empty response")
         return True
@@ -86,21 +107,21 @@ class MiSessionClient:
         try:
             resp = await self._post(SESSION_API_IS_LOGGED_IN, {})
             return isinstance(resp, dict) and resp.get("value") is True
-        except MiApiError:
+        except (MiApiError, MiAuthError):
             return False
 
     async def logout(self) -> None:
         """End the current session."""
         try:
             await self._post(SESSION_API_LOGOUT, {})
-        except MiApiError:
+        except (MiApiError, MiAuthError):
             pass
 
     def export_cookies(self) -> dict[str, str]:
         """Export session cookies for persistent storage."""
         if not self._session or not self._session.cookie_jar:
             return {}
-        cookies = {}
+        cookies: dict[str, str] = {}
         for cookie in self._session.cookie_jar:
             if cookie.key == "JSESSIONID":
                 cookies[cookie.key] = cookie.value
@@ -110,15 +131,11 @@ class MiSessionClient:
         """Restore session cookies from persistent storage."""
         if not self._session or not cookies:
             return
-        for name, value in cookies.items():
-            self._session.cookie_jar.update_cookies(
-                {name: value}, response_url=self._session_url
-            )
+        self._session.cookie_jar.update_cookies(cookies, response_url=URL(self._base))
 
-    @property
-    def _session_url(self) -> aiohttp.client.URL:
-        """URL object for cookie scoping."""
-        return aiohttp.client.URL(self._base)
+    def get_session_id(self) -> str | None:
+        """Return the current JSESSIONID value, or None if not logged in."""
+        return self.export_cookies().get("JSESSIONID")
 
     # -- Data endpoints --
 
@@ -137,15 +154,7 @@ class MiSessionClient:
         result = await self._post(SESSION_API_LIVE, entity_id)
         if not isinstance(result, dict):
             raise MiApiError(f"get_live({entity_id}) returned unexpected data")
-        # Convert microdegrees to degrees
-        for key in ("latitude", "longitude"):
-            if key in result and isinstance(result[key], (int, float)):
-                result[key] = result[key] / COORD_SCALE
-        if "routePoints" in result and isinstance(result["routePoints"], list):
-            for point in result["routePoints"]:
-                for key in ("latitude", "longitude"):
-                    if key in point and isinstance(point[key], (int, float)):
-                        point[key] = point[key] / COORD_SCALE
+        _scale_coordinates(result)
         return result
 
     async def get_miblock_status(self, entity_id: int) -> dict:
@@ -167,9 +176,7 @@ class MiSessionClient:
         """Fetch alarm block status for an entity."""
         return await self._post(f"{SESSION_API_ALARM_BLOCK_GET}/{entity_id}", {})
 
-    async def set_alarm_block_period(
-        self, entity_id: int, period: dict
-    ) -> None:
+    async def set_alarm_block_period(self, entity_id: int, period: dict) -> None:
         """Set alarm block period."""
         await self._post(f"{SESSION_API_ALARM_BLOCK_SET}/{entity_id}", period)
 
@@ -184,7 +191,7 @@ class MiSessionClient:
 
     async def get_battery_voltage(self, entity_id: int) -> float | None:
         """Fetch battery voltage for an entity."""
-        result = await self._post(f"{SESSION_API_BATTERY}/{entity_id}")
+        result = await self._post(f"{SESSION_API_BATTERY}/{entity_id}", {})
         if isinstance(result, (int, float)):
             return float(result)
         return None
@@ -193,7 +200,8 @@ class MiSessionClient:
 
     async def _post(self, endpoint: str, data: Any = None) -> Any:
         """Make an authenticated POST request."""
-        assert self._session is not None, "Client not initialized — use async with"
+        if self._session is None or self._session.closed:
+            raise RuntimeError("MiSessionClient not connected — call connect() first")
         url = f"{self._base}/{endpoint}"
         try:
             async with self._session.post(
@@ -201,7 +209,7 @@ class MiSessionClient:
                 json=data,
                 headers={"Content-Type": "application/json"},
             ) as resp:
-                if resp.status == 403:
+                if resp.status in (401, 403):
                     raise MiAuthError(f"Session expired or forbidden: {endpoint}")
                 if resp.status != 200:
                     text = await resp.text()
@@ -211,3 +219,18 @@ class MiSessionClient:
                 return await resp.json(content_type=None)
         except aiohttp.ClientError as e:
             raise MiApiError(f"Connection error on {endpoint}: {e}") from e
+
+
+def _scale_coordinates(live_data: dict) -> None:
+    """Convert microdegree integer coordinates to float degrees, in place."""
+    for key in ("latitude", "longitude"):
+        val = live_data.get(key)
+        if isinstance(val, (int, float)):
+            live_data[key] = val / COORD_SCALE
+    points = live_data.get("routePoints")
+    if isinstance(points, list):
+        for point in points:
+            for key in ("latitude", "longitude"):
+                val = point.get(key)
+                if isinstance(val, (int, float)):
+                    point[key] = val / COORD_SCALE

@@ -6,6 +6,7 @@ import logging
 from homeassistant.components.device_tracker import SourceType, TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -13,6 +14,28 @@ from .const import DOMAIN
 from .coordinator import MiHomeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def build_device_info(entity_id: int, info: dict) -> DeviceInfo:
+    """Build HA DeviceInfo from MI entity properties."""
+    licence = info.get("license", "Unknown")
+    brand = info.get("brand", "")
+    model = info.get("model", "")
+    name_parts = [licence]
+    if brand:
+        name_parts.append(brand)
+    if model:
+        name_parts.append(model)
+
+    return DeviceInfo(
+        identifiers={(DOMAIN, str(entity_id))},
+        name=" ".join(name_parts),
+        manufacturer="Moving Intelligence",
+        model=info.get("objectDescription") or "Mi50",
+        hw_version=info.get("hardwareSerial"),
+        serial_number=info.get("hardwareSerial"),
+        configuration_url="https://app.movingintelligence.com",
+    )
 
 
 async def async_setup_entry(
@@ -33,7 +56,7 @@ class MiDeviceTracker(CoordinatorEntity[MiHomeCoordinator], TrackerEntity):
     """GPS tracker for a Moving Intelligence vehicle."""
 
     _attr_has_entity_name = True
-    _attr_name = "Location"
+    _attr_translation_key = "location"
 
     def __init__(
         self,
@@ -46,12 +69,11 @@ class MiDeviceTracker(CoordinatorEntity[MiHomeCoordinator], TrackerEntity):
         info = coordinator.entities_info.get(entity_id, {})
         licence = info.get("license", "unknown").replace("-", "").lower()
         self._attr_unique_id = f"{entry.entry_id}_{licence}_tracker"
-        self._attr_device_info = _device_info(entry, entity_id, info)
+        self._attr_device_info = build_device_info(entity_id, info)
 
     @property
     def _live(self) -> dict:
-        data = self.coordinator.data or {}
-        return data.get("live", {}).get(self._mi_entity_id, {})
+        return (self.coordinator.data or {}).get("live", {}).get(self._mi_entity_id, {}) or {}
 
     @property
     def source_type(self) -> SourceType:
@@ -67,46 +89,26 @@ class MiDeviceTracker(CoordinatorEntity[MiHomeCoordinator], TrackerEntity):
 
     @property
     def location_accuracy(self) -> int:
-        return self._live.get("radius", 0)
+        # MI returns radius in meters (0 = GPS-precise)
+        radius = self._live.get("radius")
+        return int(radius) if isinstance(radius, (int, float)) else 0
 
     @property
     def extra_state_attributes(self) -> dict:
         live = self._live
-        loc = live.get("location", {})
-        attrs = {}
-        if loc:
-            if loc.get("alias"):
-                attrs["alias"] = loc["alias"]
-            if loc.get("road"):
-                addr = loc.get("road", "")
-                if loc.get("houseNumber"):
-                    addr += f" {loc['houseNumber']}"
-                attrs["address"] = addr
-            if loc.get("city"):
-                attrs["city"] = loc["city"]
+        loc = live.get("location") or {}
+        attrs: dict = {}
+        if loc.get("alias"):
+            attrs["alias"] = loc["alias"]
+        if loc.get("road"):
+            addr = loc["road"]
+            if loc.get("houseNumber"):
+                addr += f" {loc['houseNumber']}"
+            attrs["address"] = addr
+        if loc.get("city"):
+            attrs["city"] = loc["city"]
         if live.get("speed") is not None:
             attrs["speed"] = live["speed"]
         if live.get("engineOn") is not None:
             attrs["engine_on"] = live["engineOn"]
         return attrs
-
-
-def _device_info(entry: ConfigEntry, entity_id: int, info: dict) -> dict:
-    """Build HA device info from entity properties."""
-    licence = info.get("license", "Unknown")
-    brand = info.get("brand", "")
-    model = info.get("model", "")
-    name_parts = [licence]
-    if brand:
-        name_parts.append(brand)
-    if model:
-        name_parts.append(model)
-
-    return {
-        "identifiers": {(DOMAIN, str(entity_id))},
-        "name": " ".join(name_parts),
-        "manufacturer": "Moving Intelligence",
-        "model": info.get("objectDescription", "Mi50"),
-        "sw_version": info.get("hardwareSerial", ""),
-        "configuration_url": "https://app.movingintelligence.com",
-    }

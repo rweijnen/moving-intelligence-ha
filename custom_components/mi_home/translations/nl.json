@@ -10,7 +10,16 @@
           "api_key": "API-sleutel (optioneel)"
         },
         "data_description": {
-          "api_key": "Optioneel. Vraag aan bij aftersales@movingintelligence.nl voor stabielere datatoegang."
+          "api_key": "Optioneel. Vraag aan bij aftersales@movingintelligence.nl. De integratie werkt volledig zonder."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Moving Intelligence opnieuw verifiëren",
+        "description": "Je opgeslagen inloggegevens zijn niet meer geldig. Voer ze opnieuw in.",
+        "data": {
+          "email": "E-mailadres",
+          "password": "Wachtwoord",
+          "api_key": "API-sleutel (optioneel)"
         }
       }
     },
@@ -20,7 +29,8 @@
       "unknown": "Onverwachte fout. Controleer de logs."
     },
     "abort": {
-      "already_configured": "Dit account is al geconfigureerd."
+      "already_configured": "Dit account is al geconfigureerd.",
+      "reauth_successful": "Opnieuw verifiëren is gelukt."
     }
   },
   "options": {
@@ -28,13 +38,53 @@
       "init": {
         "title": "Moving Intelligence Opties",
         "data": {
-          "scan_interval": "Update-interval (seconden)",
+          "scan_interval": "Fallback poll-interval (seconden)",
           "max_journeys": "Maximum opgeslagen ritten"
         },
         "data_description": {
-          "scan_interval": "Hoe vaak er gepolld wordt voor updates (30–300 seconden).",
+          "scan_interval": "Hoe vaak langzaam-veranderende data ververst wordt als STOMP push niet beschikbaar is (30–300 seconden).",
           "max_journeys": "Maximum aantal ritten dat per voertuig bewaard wordt (10–1000)."
         }
+      }
+    }
+  },
+  "entity": {
+    "device_tracker": {
+      "location": {
+        "name": "Locatie"
+      }
+    },
+    "sensor": {
+      "speed": {
+        "name": "Snelheid"
+      },
+      "address": {
+        "name": "Adres"
+      },
+      "battery_voltage": {
+        "name": "Accuspanning"
+      },
+      "last_journey_distance": {
+        "name": "Laatste rit afstand"
+      },
+      "last_journey_duration": {
+        "name": "Laatste rit duur"
+      },
+      "alarm_count": {
+        "name": "Aantal alarmen"
+      }
+    },
+    "binary_sensor": {
+      "engine": {
+        "name": "Motor"
+      },
+      "jammed": {
+        "name": "Gestoord"
+      }
+    },
+    "switch": {
+      "immobilizer": {
+        "name": "Startonderbreker"
       }
     }
   }

@@ -1,12 +1,13 @@
 {
   "domain": "mi_home",
   "name": "Moving Intelligence",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "documentation": "https://github.com/rweijnen/moving-intelligence-ha",
   "issue_tracker": "https://github.com/rweijnen/moving-intelligence-ha/issues",
   "requirements": [],
   "dependencies": [],
   "codeowners": ["@rweijnen"],
-  "iot_class": "cloud_polling",
-  "config_flow": true
+  "iot_class": "cloud_push",
+  "config_flow": true,
+  "integration_type": "hub"
 }
