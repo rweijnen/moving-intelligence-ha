@@ -70,6 +70,12 @@
       "last_journey_duration": {
         "name": "Last journey duration"
       },
+      "last_journey_max_speed": {
+        "name": "Last journey max speed"
+      },
+      "last_journey_avg_speed": {
+        "name": "Last journey avg speed"
+      },
       "alarm_count": {
         "name": "Alarm count"
       }
@@ -85,6 +91,11 @@
     "switch": {
       "immobilizer": {
         "name": "Immobilizer"
+      }
+    },
+    "calendar": {
+      "journeys": {
+        "name": "Journeys"
       }
     }
   }

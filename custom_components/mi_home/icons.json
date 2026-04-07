@@ -21,6 +21,12 @@
       "last_journey_duration": {
         "default": "mdi:timer-outline"
       },
+      "last_journey_max_speed": {
+        "default": "mdi:speedometer"
+      },
+      "last_journey_avg_speed": {
+        "default": "mdi:speedometer-medium"
+      },
       "alarm_count": {
         "default": "mdi:alarm-light"
       }
@@ -45,6 +51,11 @@
         "state": {
           "on": "mdi:engine-off"
         }
+      }
+    },
+    "calendar": {
+      "journeys": {
+        "default": "mdi:road-variant"
       }
     }
   }

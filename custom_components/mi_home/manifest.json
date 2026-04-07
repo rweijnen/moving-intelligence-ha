@@ -1,7 +1,7 @@
 {
   "domain": "mi_home",
   "name": "Moving Intelligence",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "documentation": "https://github.com/rweijnen/moving-intelligence-ha",
   "issue_tracker": "https://github.com/rweijnen/moving-intelligence-ha/issues",
   "requirements": [],

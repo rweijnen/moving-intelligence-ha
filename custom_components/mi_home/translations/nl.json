@@ -70,6 +70,12 @@
       "last_journey_duration": {
         "name": "Laatste rit duur"
       },
+      "last_journey_max_speed": {
+        "name": "Laatste rit max snelheid"
+      },
+      "last_journey_avg_speed": {
+        "name": "Laatste rit gem snelheid"
+      },
       "alarm_count": {
         "name": "Aantal alarmen"
       }
@@ -85,6 +91,11 @@
     "switch": {
       "immobilizer": {
         "name": "Startonderbreker"
+      }
+    },
+    "calendar": {
+      "journeys": {
+        "name": "Ritten"
       }
     }
   }

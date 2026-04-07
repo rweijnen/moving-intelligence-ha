@@ -64,4 +64,4 @@ STOMP_HEARTBEAT_MS = 4000
 STOMP_RECONNECT_DELAY = 5  # seconds
 
 # Platforms
-PLATFORMS = ["device_tracker", "sensor", "binary_sensor", "switch"]
+PLATFORMS = ["device_tracker", "sensor", "binary_sensor", "switch", "calendar"]

@@ -84,14 +84,22 @@ def _journey_duration(coord: MiHomeCoordinator, eid: int) -> int | None:
     return round((end - start) / 60) if start and end else None
 
 
+def _journey_max_speed(coord: MiHomeCoordinator, eid: int) -> int | None:
+    j = _last_journey(coord, eid)
+    return j.get("max_speed") if j else None
+
+
+def _journey_avg_speed(coord: MiHomeCoordinator, eid: int) -> int | None:
+    j = _last_journey(coord, eid)
+    return j.get("avg_speed") if j else None
+
+
 def _journey_attrs(coord: MiHomeCoordinator, eid: int) -> dict[str, Any]:
     journeys = coord.get_journeys(eid)
     if not journeys:
         return {}
     j = journeys[-1]
     attrs: dict[str, Any] = {
-        "max_speed": j.get("max_speed"),
-        "avg_speed": j.get("avg_speed"),
         "waypoint_count": j.get("waypoint_count"),
         "total_journeys_stored": len(journeys),
     }
@@ -103,6 +111,12 @@ def _journey_attrs(coord: MiHomeCoordinator, eid: int) -> dict[str, Any]:
         attrs["end_time"] = datetime.fromtimestamp(
             j["end_time"], tz=timezone.utc
         ).isoformat()
+    if j.get("start_location"):
+        attrs["start_lat"] = j["start_location"].get("lat")
+        attrs["start_lon"] = j["start_location"].get("lon")
+    if j.get("end_location"):
+        attrs["end_lat"] = j["end_location"].get("lat")
+        attrs["end_lon"] = j["end_location"].get("lon")
     return attrs
 
 
@@ -140,7 +154,6 @@ SENSOR_DESCRIPTIONS: tuple[MiSensorDescription, ...] = (
         key="last_journey_distance",
         translation_key="last_journey_distance",
         native_unit_of_measurement="km",
-        state_class=SensorStateClass.MEASUREMENT,
         value_fn=_journey_distance,
         attrs_fn=_journey_attrs,
     ),
@@ -149,6 +162,18 @@ SENSOR_DESCRIPTIONS: tuple[MiSensorDescription, ...] = (
         translation_key="last_journey_duration",
         native_unit_of_measurement="min",
         value_fn=_journey_duration,
+    ),
+    MiSensorDescription(
+        key="last_journey_max_speed",
+        translation_key="last_journey_max_speed",
+        native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
+        value_fn=_journey_max_speed,
+    ),
+    MiSensorDescription(
+        key="last_journey_avg_speed",
+        translation_key="last_journey_avg_speed",
+        native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
+        value_fn=_journey_avg_speed,
     ),
     MiSensorDescription(
         key="alarm_count",
